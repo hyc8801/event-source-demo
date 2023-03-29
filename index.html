@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>EventSource Demo</title>
+  </head>
+  <body>
+    <label for="message">Message:</label>
+    <input type="text" id="message" name="message" />
+    <button id="eventSend">EventSource发送</button>
+    <button id="fetchSend">fetch发送</button>
+    <button id="customSend">自定义发送</button>
+    
+    <script>
+      /**
+       * 将服务端格返回字符串尝试格式化为json
+       * @param {String} str
+       * @returns
+       */
+      const parase = (str) => {
+        if (typeof str !== 'string') {
+          return str;
+        }
+        try {
+          return JSON.parse(str.substring(6));
+        } catch (error) {
+          return str;
+        }
+      };
+
+      /**
+       * 将Uint8Array转换为字符串
+       * @param {Uint8Array} fileData
+       * @returns
+       */
+      const Uint8ArrayToString = (fileData) => {
+        const utf8 = Array.from(fileData)
+          .map((item) => String.fromCharCode(item))
+          .join('');
+
+        return decodeURIComponent(escape(utf8));
+      };
+
+      /**
+       * 基于fetch/ReadableStream 自定义封装的fetch请求
+       * @param {*} url 请求链接
+       * @param {*} params
+       * @returns
+       */
+      const fetchStream = (url, params) => {
+        const { onmessage, onclose, ...otherParams } = params;
+
+        const push = async (controller, reader) => {
+          const { value, done } = await reader.read();
+          if (done) {
+            controller.close();
+            onclose?.();
+          } else {
+            onmessage?.(Uint8ArrayToString(value));
+            controller.enqueue(value);
+            push(controller, reader);
+          }
+        };
+
+        return fetch(url, otherParams)
+          .then((response) => {
+            const reader = response.body.getReader();
+            const stream = new ReadableStream({
+              start(controller) {
+                push(controller, reader);
+              },
+            });
+            return stream;
+          })
+          .then((stream) => new Response(stream, { headers: { 'Content-Type': 'text/html' } }).text());
+      };
+
+      /** DOM节点 */
+      const messageInput = document.getElementById('message');
+      const eventSendButton = document.getElementById('eventSend');
+      const fetchSendButton = document.getElementById('fetchSend');
+      const customSendButton = document.getElementById('customSend');
+
+      // EventSource 对象发送
+      eventSendButton.addEventListener('click', () => {
+        // 发送数据到服务端
+        const message = messageInput.value;
+        // 创建 EventSource 对象
+        const eventSource = new EventSource(`/stream?message=${message}`);
+
+        eventSource.onopen = () => {
+          console.log('Connection to server opened.');
+        };
+
+        // 监听服务器返回的数据
+        eventSource.onmessage = (event) => {
+          console.log(event.data);
+        };
+
+        eventSource.onerror = () => {
+          eventSource.close();
+        };
+      });
+
+      fetchSendButton.addEventListener('click', () => {
+        const message = messageInput.value;
+        fetch(`/stream?message=${message}`, {
+          method: 'GET',
+          headers: {
+            accept: 'text/event-stream',
+            'Content-Type': 'application/json',
+          },
+        }).then((res) => {
+          console.log(`fetch请求返回结果~`, res);
+        });
+      });
+
+      // 自定义封装fetch 请求
+      customSendButton.addEventListener('click', () => {
+        // 创建 EventSource 对象
+        const message = messageInput.value;
+        fetchStream(`/stream?message=${message}`, {
+          method: 'GET',
+          headers: {
+            accept: 'text/event-stream',
+            'Content-Type': 'application/json',
+          },
+          onmessage: (res) => {
+            const json = parase(res);
+            console.log(json);
+          },
+        });
+      });
+    </script>
+  </body>
+</html>
